@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.btn {
+  @apply h-full px-10 py-3 lg:px-12 lg:py-4 text-sm lg:text-base font-medium cursor-pointer;
+}
+.btn-primary {
+  @apply bg-primary-blue hover:bg-primary-blue-hover text-white ease-out duration-300;
+}
+.btn-secondary {
+  @apply bg-white hover:bg-primary-blue-hover text-primary-blue hover:text-white  ease-out duration-300;
+}
+.btn-hero {
+  @apply h-full text-sm lg:text-base font-medium px-8 py-4 lg:px-12 lg:py-6 cursor-pointer bg-secondary-blue hover:bg-primary-blue-hover text-white ease-out duration-300;
+}
