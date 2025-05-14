@@ -1,0 +1,12 @@
+specVersion: "v1"
+serviceId: "proiect-licenta"
+location: "us-central1"
+schema:
+  source: "./schema"
+  datasource:
+    postgresql:
+      database: "fdcdb"
+      cloudSql:
+        instanceId: "proiect-licenta-fdc"
+      # schemaValidation: "COMPATIBLE"
+connectorDirs: ["./connector"]

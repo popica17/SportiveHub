@@ -35,7 +35,11 @@ function Footer() {
             </div>
           </div>
 
+<<<<<<< HEAD
           <h5 className="text-blue-200 font-medium">© 2024 by SportiveHub</h5>
+=======
+          <h5 className="text-blue-200 font-medium">© 2025 by SportiveHub</h5>
+>>>>>>> proiect-recuperat
         </div>
       </div>
     </div>

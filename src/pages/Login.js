@@ -1,17 +1,76 @@
+<<<<<<< HEAD
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 
 function Login() {
+=======
+import React, { useState, useEffect } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { loginWithGoogle, loginWithEmail } from "../firebaseAuth";
+import { useAuth } from "../contexts/AuthContext";
+
+function Login() {
+  const navigate = useNavigate();
+  const { currentUser } = useAuth();
+>>>>>>> proiect-recuperat
   const [formData, setFormData] = useState({
     email: "",
     password: "",
     rememberMe: false,
   });
+<<<<<<< HEAD
 
   const handleSubmit = (e) => {
     e.preventDefault();
     // Handle login logic here
     console.log("Login attempt:", formData);
+=======
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (currentUser) {
+      navigate("/");
+    }
+  }, [currentUser, navigate]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    try {
+      await loginWithEmail(formData.email, formData.password);
+      // Navigation is handled by the useEffect above once currentUser updates
+    } catch (error) {
+      console.error("Login failed:", error.message);
+      setError(
+        error.message.includes("user-not-found")
+          ? "No account found with this email. Please check your email or register."
+          : error.message.includes("wrong-password")
+          ? "Incorrect password. Please try again."
+          : error.message
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setError(null);
+    setLoading(true);
+
+    try {
+      await loginWithGoogle();
+      // Navigation is handled by the useEffect once currentUser updates
+    } catch (error) {
+      console.error("Error signing in with Google:", error.message);
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+>>>>>>> proiect-recuperat
   };
 
   return (
@@ -35,6 +94,18 @@ function Login() {
 
         {/* Form */}
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+<<<<<<< HEAD
+=======
+          {error && (
+            <div
+              className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative"
+              role="alert"
+            >
+              <span className="block sm:inline">{error}</span>
+            </div>
+          )}
+
+>>>>>>> proiect-recuperat
           <div className="rounded-md shadow-sm space-y-4">
             <div>
               <label
@@ -111,9 +182,18 @@ function Login() {
           <div>
             <button
               type="submit"
+<<<<<<< HEAD
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
             >
               Sign in
+=======
+              disabled={loading}
+              className={`group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white ${
+                loading ? "bg-blue-400" : "bg-blue-600 hover:bg-blue-700"
+              } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500`}
+            >
+              {loading ? "Signing in..." : "Sign in"}
+>>>>>>> proiect-recuperat
             </button>
           </div>
 
@@ -133,13 +213,28 @@ function Login() {
             <div className="mt-6 grid grid-cols-2 gap-3">
               <button
                 type="button"
+<<<<<<< HEAD
                 className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+=======
+                onClick={handleGoogleLogin}
+                disabled={loading}
+                className={`w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium ${
+                  loading ? "text-gray-300" : "text-gray-500 hover:bg-gray-50"
+                }`}
+>>>>>>> proiect-recuperat
               >
                 Google
               </button>
               <button
                 type="button"
+<<<<<<< HEAD
                 className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+=======
+                disabled={loading}
+                className={`w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium ${
+                  loading ? "text-gray-300" : "text-gray-500 hover:bg-gray-50"
+                }`}
+>>>>>>> proiect-recuperat
               >
                 Facebook
               </button>
