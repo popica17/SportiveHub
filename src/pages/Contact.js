@@ -268,7 +268,7 @@ function Contact() {
               Address
             </h3>
             <p className="mt-2 text-base text-gray-600 text-center">
-              123 Sports Avenue, City, Country
+              Aleea Arhitect Duiliu Marcu 9, Craiova, Romania
             </p>
           </div>
         </div>

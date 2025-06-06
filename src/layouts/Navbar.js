@@ -1,12 +1,3 @@
-<<<<<<< HEAD
-import React from "react";
-import { Link } from "react-router-dom";
-import logo from "../assets/logo.png";
-const navbarPages = [
-  { name: "Home", path: "/" },
-  { name: "Tournaments", path: "/tournaments" },
-  { name: "Ranking", path: "/ranking" },
-=======
 import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import logo from "../assets/logo.png";
@@ -21,32 +12,13 @@ const publicPages = [
 ];
 
 const authPages = [
->>>>>>> proiect-recuperat
-  { name: "Login", path: "/login" },
+  { name: "Log in", path: "/login" },
   { name: "Register", path: "/register" },
 ];
 
 function Navbar() {
-<<<<<<< HEAD
-  return (
-    <div>
-      <nav className="fixed w-full z-50 bg-primary-blue py-0">
-        <div className="max-w-5x1 mx-auto flex flex-row jsutify between items-center">
-          <a href="/" className="mr-8">
-            <img src={logo} alt="logo" width={80} />
-          </a>
-          <ul className="flex space-x-6">
-            {navbarPages.map((page, index) => (
-              <li key={index}>
-                <Link to={page.path} className="text-white hover:text-gray-200">
-                  {page.name}
-                </Link>
-              </li>
-            ))}
-          </ul>
-=======
   const navigate = useNavigate();
-  const { currentUser, userProfile } = useAuth();
+  const { currentUser, userProfile, isAdmin, isSuperAdmin } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -155,14 +127,50 @@ function Navbar() {
                         onClick={() => setDropdownOpen(false)}
                       >
                         My Account
+                      </Link>{" "}
+                      <Link
+                        to="/team"
+                        className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        onClick={() => setDropdownOpen(false)}
+                      >
+                        Team Management
                       </Link>
+                      {!isAdmin && (
+                        <Link
+                          to="/team-invitations"
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          onClick={() => setDropdownOpen(false)}
+                        >
+                          Team Invitations
+                        </Link>
+                      )}
                       <Link
                         to="/my-tournaments"
                         className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                         onClick={() => setDropdownOpen(false)}
                       >
                         My Tournaments
-                      </Link>
+                      </Link>{" "}
+                      {/* SuperAdmin links - Only SuperAdmin can access the dashboard */}
+                      {isSuperAdmin && (
+                        <Link
+                          to="/admin/dashboard"
+                          className="block px-4 py-2 text-sm text-blue-600 hover:bg-gray-100"
+                          onClick={() => setDropdownOpen(false)}
+                        >
+                          Admin Dashboard
+                        </Link>
+                      )}
+                      {/* SuperAdmin specific links */}
+                      {isSuperAdmin && (
+                        <Link
+                          to="/admin-requests"
+                          className="block px-4 py-2 text-sm text-blue-600 hover:bg-gray-100"
+                          onClick={() => setDropdownOpen(false)}
+                        >
+                          Admin Requests
+                        </Link>
+                      )}
                       <button
                         onClick={handleSignOut}
                         className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
@@ -186,7 +194,6 @@ function Navbar() {
               )}
             </ul>
           </div>
->>>>>>> proiect-recuperat
         </div>
       </nav>
       <div style={{ height: 120 }} />

@@ -1,0 +1,143 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is an admin
+    function isAdmin() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin" || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "superadmin";
+    }
+    
+    // Helper function to check if user is a team manager
+    function isTeamManager() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "teamManager";
+    }
+    
+    // Helper function to check if user is the manager of a specific team
+    function isManagerOfTeam(teamId) {
+      return isAuthenticated() && get(/databases/$(database)/documents/teams/$(teamId)).data.managerId == request.auth.uid;
+    }
+    
+    // Helper function to check if user is a member of a specific team
+    function isTeamMember(teamId) {
+      return isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/teams/$(teamId)).data.memberIds;
+    }
+    
+    // Rules for teams collection
+    match /teams/{teamId} {
+      // Only admins can create teams
+      allow create: if isAdmin();
+      // Team managers can update their own team or admins can update any team
+      allow update: if isManagerOfTeam(teamId) || isAdmin();
+      // Anyone can read team data
+      allow read: if true;
+      // Only admins can delete teams
+      allow delete: if isAdmin();
+    }
+    
+    // Rules for team invitations
+    match /teamInvites/{inviteId} {
+      // Team managers can create invites
+      allow create: if isTeamManager() && resource.data.teamId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId;
+      // Invited users can read their invites, and team managers can read invites they sent
+      allow read: if isAuthenticated() && 
+                  (resource.data.userEmail == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email || 
+                  isManagerOfTeam(resource.data.teamId));
+      // Invited users can update invite status or managers can cancel invites
+      allow update: if isAuthenticated() && 
+                    (resource.data.userEmail == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email || 
+                    isManagerOfTeam(resource.data.teamId));
+      // Only team managers can delete invites they sent
+      allow delete: if isManagerOfTeam(resource.data.teamId);
+    }
+      // Rules for tournament participants (legacy - keeping for backwards compatibility)
+    match /tournamentParticipants/{participantId} {
+      // Only admins can create new entries
+      allow create: if isAdmin();
+      // Anyone can read participant data
+      allow read: if true;
+      // Only admins can update or delete
+      allow update, delete: if isAdmin();
+    }
+    
+    // Rules for tournament teams (new collection for team-based tournaments)
+    match /tournamentTeams/{teamRegistrationId} {
+      // Only team managers (admins) can register their teams for tournaments
+      allow create: if isTeamManager() && 
+                     request.resource.data.teamId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId;
+      // Anyone can read tournament team data
+      allow read: if true;
+      // Team managers can only withdraw their own teams
+      allow update, delete: if isTeamManager() && resource.data.teamId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId;
+      // Admins can update or delete any team registration
+      allow update, delete: if isAdmin();
+    }
+      // Rules for matches
+    match /matches/{matchId} {
+      // Only admins can create matches
+      allow create: if isAdmin();
+      // Anyone can read match info
+      allow read: if true;
+      // Only admins can update match details
+      allow update: if isAdmin();
+      // Only admins can delete matches
+      allow delete: if isAdmin();
+    }
+      // Rules for player statistics
+    match /playerStats/{statsId} {
+      // Only admins can create and update player stats
+      allow create, update: if isAdmin();
+      // Team managers can read stats for their team players
+      allow read: if isTeamManager() && isTeamMember(get(/databases/$(database)/documents/users/$(resource.data.playerId)).data.teamId);
+      // Players can read their own stats
+      allow read: if isAuthenticated() && resource.data.playerId == request.auth.uid;
+      // Anyone can read public stats summaries
+      allow read: if resource.data.isPublic == true;
+      // Only admins can delete stats
+      allow delete: if isAdmin();
+    }
+    
+    // Rules for team statistics
+    match /teamStats/{statsId} {
+      // Only admins can create and update team stats
+      allow create, update: if isAdmin();
+      // Team managers can read stats for their team
+      allow read: if isTeamManager() && resource.data.teamId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId;
+      // Anyone can read team stats (they're public)
+      allow read: if true;
+      // Only admins can delete stats
+      allow delete: if isAdmin();
+    }
+    
+    // Rules for tournament standings
+    match /tournamentStandings/{standingId} {
+      // Only admins can create and update standings
+      allow create, update: if isAdmin();
+      // Anyone can read standings
+      allow read: if true;
+      // Only admins can delete standings
+      allow delete: if isAdmin();
+    }
+    
+    // Rules for users collection (existing)
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAdmin();
+    }
+      // Helper function to check if user is a superadmin
+    function isSuperAdmin() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "superadmin";
+    }
+    
+    // Rules for tournaments collection - only superadmins can create tournaments
+    match /tournaments/{tournamentId} {
+      allow read: if true;
+      allow create: if isSuperAdmin();
+      allow update, delete: if isSuperAdmin();
+    }
+  }
+}

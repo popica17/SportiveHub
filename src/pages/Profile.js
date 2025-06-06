@@ -24,6 +24,7 @@ function Profile() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [message, setMessage] = useState({ text: "", type: "" });
   const [loading, setLoading] = useState(false);
 
@@ -85,17 +86,19 @@ function Profile() {
       setLoading(false);
     }
   };
+  const handleDeleteClick = () => {
+    setShowDeleteConfirm(true);
+  };
+
+  const closeDeleteModal = () => {
+    setShowDeleteConfirm(false);
+  };
 
   const deleteAccount = async () => {
-    if (
-      window.confirm(
-        "Are you sure you want to delete your account? This action cannot be undone."
-      )
-    ) {
-      setLoading(true);
-      try {
-        // Get user ID for Firestore operations
-        const userId = currentUser.uid;
+    setLoading(true);
+    try {
+      // Get user ID for Firestore operations
+      const userId = currentUser.uid;
 
         // 1. Delete user's tournament registrations
         const participantsQuery = query(
@@ -130,8 +133,7 @@ function Profile() {
         // 5. Redirect to home page
         navigate("/");
       } catch (error) {
-        console.error("Error deleting account:", error.message);
-        setMessage({
+        console.error("Error deleting account:", error.message);        setMessage({
           text: error.message.includes("requires-recent-login")
             ? "Please log out and log in again before deleting your account"
             : "Error deleting account: " + error.message,
@@ -139,7 +141,6 @@ function Profile() {
         });
         setLoading(false);
       }
-    }
   };
 
   return (
@@ -194,7 +195,7 @@ function Profile() {
           {/* Change Password Section */}
           <div className="mb-8">
             <h3 className="text-lg font-medium text-gray-900 mb-3">
-              Security Settings
+              Account Settings
             </h3>
 
             {!showPasswordForm ? (
@@ -286,30 +287,69 @@ function Profile() {
                   </button>
                 </div>
               </form>
-            )}
-          </div>
-
-          {/* Delete Account Section */}
-          <div className="pt-4 border-t border-gray-200">
-            <h3 className="text-lg font-medium text-gray-900 mb-3">
-              Danger Zone
-            </h3>
-            <p className="text-sm text-gray-600 mb-4">
-              Once you delete your account, there is no going back. Please be
-              certain.
-            </p>
-            <button
-              onClick={deleteAccount}
-              disabled={loading}
-              className={`text-sm ${
-                loading ? "bg-red-400" : "bg-red-600 hover:bg-red-700"
-              } text-white font-medium py-2 px-4 rounded focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500`}
-            >
-              {loading ? "Processing..." : "Delete Account"}
-            </button>
+            )}            <div className="mt-6">
+              <button
+                onClick={handleDeleteClick}
+                disabled={loading}
+                className={`text-sm ${
+                  loading ? "bg-red-400" : "bg-red-600 hover:bg-red-700"
+                } text-white font-medium py-2 px-4 rounded focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500`}
+              >
+                {loading ? "Processing..." : "Delete Account"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Delete Account Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div className="mt-3 text-center">
+              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mb-4">
+                <svg
+                  className="h-6 w-6 text-red-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  ></path>
+                </svg>
+              </div>
+              <h3 className="text-lg leading-6 font-medium text-gray-900 mb-2">Delete Account</h3>
+              <div className="mt-2 px-7 py-3">
+                <p className="text-sm text-gray-600">
+                  Once you delete your account, there is no going back. Please be certain.
+                </p>
+              </div>
+              <div className="flex justify-center gap-4 mt-4">
+                <button
+                  onClick={closeDeleteModal}
+                  className="px-4 py-2 bg-gray-300 text-gray-700 text-base font-medium rounded-md shadow-sm hover:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={deleteAccount}
+                  disabled={loading}
+                  className={`px-4 py-2 text-white text-base font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-red-500 ${
+                    loading ? "bg-red-400" : "bg-red-600 hover:bg-red-700"
+                  }`}
+                >
+                  {loading ? "Processing..." : "Delete Account"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

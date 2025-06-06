@@ -15,20 +15,82 @@ import {
   arrayRemove,
 } from "firebase/firestore";
 import { useAuth } from "../contexts/AuthContext";
+import MatchList from "../components/MatchList";
+
+// Helper function to fetch real-time team data
+const getLatestTeamData = async (teamId) => {
+  if (!teamId) return null;
+
+  try {
+    const teamRef = doc(db, "teams", teamId);
+    const teamDoc = await getDoc(teamRef);
+
+    if (teamDoc.exists()) {
+      const teamData = teamDoc.data();
+      return {
+        name: teamData.name,
+        memberCount: teamData.memberIds ? teamData.memberIds.length : 0,
+      };
+    }
+  } catch (err) {
+    console.error(`Error fetching latest data for team ${teamId}:`, err);
+  }
+
+  return null;
+};
 
 function TournamentDetail() {
   const { tournamentId } = useParams();
   const navigate = useNavigate();
-  const { currentUser, userProfile } = useAuth();
+  const { currentUser, userProfile, isAdmin, isSuperAdmin } = useAuth();
   const [tournament, setTournament] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isRegistered, setIsRegistered] = useState(false);
   const [participants, setParticipants] = useState([]);
+  const [teams, setTeams] = useState({});
+  const [teamCount, setTeamCount] = useState(0);
+
+  // Edit mode state variables
+  const [editMode, setEditMode] = useState(false);
+  const [editFormData, setEditFormData] = useState(null);
+  const [isEditing, setIsEditing] = useState(false);
+  // Permission check for editing tournament - only superadmins can edit tournaments
+  const canEditTournament = tournament && isSuperAdmin;
+
+  // Delete tournament confirmation state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     fetchTournamentDetails();
   }, [tournamentId]);
+
+  useEffect(() => {
+    // Since our participants are now teams, we can simplify this
+    if (participants.length > 0) {
+      const teamSummary = {};
+      participants.forEach((team) => {
+        if (team.teamId && team.teamName) {
+          // Ensure we're using the most up-to-date member count
+          const memberCount =
+            typeof team.memberCount === "number" ? team.memberCount : 0;
+          console.log(
+            `Team summary for ${team.teamName}: ${memberCount} members`
+          );
+          teamSummary[team.teamId] = {
+            name: team.teamName,
+            members: memberCount,
+          };
+        }
+      });
+
+      setTeams(teamSummary);
+      setTeamCount(participants.length);
+    } else {
+      setTeams({});
+      setTeamCount(0);
+    }
+  }, [participants]);
 
   const fetchTournamentDetails = async () => {
     try {
@@ -50,44 +112,122 @@ function TournamentDetail() {
       const formattedTournament = {
         id: tournamentDoc.id,
         ...tournamentData,
-        startDate: tournamentData.startDate
-          ? new Date(tournamentData.startDate.seconds * 1000)
-          : null,
-        registrationDeadline: tournamentData.registrationDeadline
-          ? new Date(tournamentData.registrationDeadline.seconds * 1000)
-          : null,
-        createdAt: tournamentData.createdAt
-          ? new Date(tournamentData.createdAt.seconds * 1000)
-          : null,
+        startDate:
+          tournamentData.startDate && tournamentData.startDate.seconds
+            ? new Date(tournamentData.startDate.seconds * 1000)
+            : null,
+        registrationDeadline:
+          tournamentData.registrationDeadline &&
+          tournamentData.registrationDeadline.seconds
+            ? new Date(tournamentData.registrationDeadline.seconds * 1000)
+            : null,
+        createdAt:
+          tournamentData.createdAt && tournamentData.createdAt.seconds
+            ? new Date(tournamentData.createdAt.seconds * 1000)
+            : null,
       };
 
       setTournament(formattedTournament);
 
-      // Check if current user is registered
-      if (currentUser) {
-        const participantsQuery = query(
-          collection(db, "tournamentParticipants"),
-          where("tournamentId", "==", tournamentId),
-          where("userId", "==", currentUser.uid)
-        );
+      // Check if current user's team is registered (only for admins with teams)
+      if (currentUser && isAdmin) {
+        // Get user data including their teamId
+        const userRef = doc(db, "users", currentUser.uid);
+        const userDoc = await getDoc(userRef);
+        const userData = userDoc.data();
 
-        const participantsSnapshot = await getDocs(participantsQuery);
-        setIsRegistered(!participantsSnapshot.empty);
-      }
+        if (userData && userData.teamId) {
+          const teamRegistrationQuery = query(
+            collection(db, "tournamentTeams"),
+            where("tournamentId", "==", tournamentId),
+            where("teamId", "==", userData.teamId)
+          );
 
-      // Fetch all participants
-      const allParticipantsQuery = query(
-        collection(db, "tournamentParticipants"),
+          const teamRegistrationSnapshot = await getDocs(teamRegistrationQuery);
+          setIsRegistered(!teamRegistrationSnapshot.empty);
+        }
+      } // Fetch all registered teams (only registration documents, not statistics documents)
+      const registeredTeamsQuery = query(
+        collection(db, "tournamentTeams"),
         where("tournamentId", "==", tournamentId)
       );
 
-      const allParticipantsSnapshot = await getDocs(allParticipantsQuery);
-      const participantsData = allParticipantsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      const registeredTeamsSnapshot = await getDocs(registeredTeamsQuery);
+      // Filter out statistics documents - only keep registration documents
+      const registrationDocs = registeredTeamsSnapshot.docs.filter((doc) => {
+        const data = doc.data();
+        const docId = doc.id;
+        // Registration documents have teamName and managerName, and don't end with "_stats"
+        return (
+          data.teamName &&
+          data.managerName !== undefined &&
+          !docId.endsWith("_stats")
+        );
+      });
 
-      setParticipants(participantsData);
+      const teamsData = await Promise.all(
+        registrationDocs.map(async (teamSnapshot) => {
+          const teamData = teamSnapshot.data();
+          let updatedTeamData = {
+            id: teamSnapshot.id,
+            ...teamData,
+          };
+
+          // Fetch current team information to get the latest member count
+          if (teamData.teamId) {
+            try {
+              const teamRef = doc(db, "teams", teamData.teamId);
+              const teamDoc = await getDoc(teamRef);
+              if (teamDoc.exists()) {
+                const currentTeamData = teamDoc.data();
+                const currentMemberCount = currentTeamData.memberIds
+                  ? currentTeamData.memberIds.length
+                  : 0;
+                console.log(
+                  `Team ${teamData.teamName} has ${currentMemberCount} members`
+                );
+                // Update the member count with the current value
+                updatedTeamData.memberCount = currentMemberCount;
+              } else {
+                console.log(
+                  `Team document not found for ${
+                    teamData.teamName
+                  }, using stored memberCount: ${teamData.memberCount || 0}`
+                );
+              }
+            } catch (teamErr) {
+              console.error(
+                "Error fetching team details for " + teamData.teamName,
+                teamErr
+              );
+            }
+          } else {
+            console.log(
+              `No teamId for team ${
+                teamData.teamName
+              }, using stored memberCount: ${teamData.memberCount || 0}`
+            );
+          }
+
+          return updatedTeamData;
+        })
+      );
+
+      // Filter out any undefined values and ensure all entries have valid data
+      const validTeamsData = teamsData.filter((team) => team && team.id);
+
+      // Log detailed information about each team's member count for debugging
+      validTeamsData.forEach((team) => {
+        console.log(
+          `Team ${team.teamName}: memberCount=${
+            team.memberCount
+          }, type=${typeof team.memberCount}`
+        );
+      });
+
+      console.log("Final teams data:", validTeamsData);
+
+      setParticipants(validTeamsData);
     } catch (err) {
       console.error("Error fetching tournament details:", err);
       setError("Failed to load tournament details. Please try again later.");
@@ -103,6 +243,10 @@ function TournamentDetail() {
     }
 
     try {
+      console.log("Registration attempt - User:", currentUser.uid);
+      console.log("Current user profile:", userProfile);
+      console.log("Is admin:", isAdmin);
+
       // Check if registration is still open
       const now = new Date();
       if (tournament.registrationDeadline < now) {
@@ -118,17 +262,117 @@ function TournamentDetail() {
         return;
       }
 
-      // Add user to participants collection
-      await addDoc(collection(db, "tournamentParticipants"), {
+      // Check if user is an admin
+      if (!isAdmin) {
+        setError("Only administrators can register teams for tournaments.");
+        console.log(
+          "User is not an admin or team manager, cannot register for tournament"
+        );
+        return;
+      }
+
+      // Check if admin has a team
+      const userRef = doc(db, "users", currentUser.uid);
+      const userDoc = await getDoc(userRef);
+      const userData = userDoc.data();
+
+      console.log("User data from database:", userData);
+      console.log("User role:", userData?.role);
+      console.log("User teamId:", userData?.teamId);
+      console.log("isAdmin check result:", isAdmin);
+
+      if (!userData || !userData.teamId) {
+        setError(
+          "You must have a team to register for this tournament. Please create a team first."
+        );
+        console.log("No teamId found in user data");
+        return;
+      }
+
+      // Double-check that the team actually exists in the database
+      try {
+        const teamRef = doc(db, "teams", userData.teamId);
+        const teamDoc = await getDoc(teamRef);
+
+        if (!teamDoc.exists()) {
+          console.error(
+            "Team referenced in user profile does not exist:",
+            userData.teamId
+          );
+          setError(
+            "Your team could not be found in the database. Please try creating your team again."
+          );
+          return;
+        }
+
+        console.log(
+          "Team verification successful - team exists:",
+          teamDoc.data()
+        );
+      } catch (teamVerifyError) {
+        console.error("Error verifying team existence:", teamVerifyError);
+        setError("Error verifying your team. Please try again.");
+        return;
+      }
+
+      // Check if team is already registered for this tournament
+      const teamRegistrationQuery = query(
+        collection(db, "tournamentTeams"),
+        where("tournamentId", "==", tournamentId),
+        where("teamId", "==", userData.teamId)
+      );
+
+      const teamRegistrationSnapshot = await getDocs(teamRegistrationQuery);
+      if (!teamRegistrationSnapshot.empty) {
+        setError("Your team is already registered for this tournament.");
+        return;
+      }
+
+      // Get team information
+      console.log("Fetching team with ID:", userData.teamId);
+      const teamRef = doc(db, "teams", userData.teamId);
+      const teamDoc = await getDoc(teamRef);
+
+      if (!teamDoc.exists()) {
+        console.error("Team document not found for ID:", userData.teamId);
+        setError(
+          "Your team information could not be found. Please contact an administrator."
+        );
+        return;
+      }
+
+      const teamData = teamDoc.data();
+      console.log("Team data found:", teamData);
+
+      // Prepare the team registration data
+      const teamRegistrationData = {
         tournamentId,
-        userId: currentUser.uid,
-        displayName:
+        teamId: userData.teamId,
+        teamName: teamData.name || "Team",
+        sport: teamData.sport || "General",
+        managerId: currentUser.uid,
+        managerName:
           currentUser.displayName ||
           userProfile?.firstName ||
           currentUser.email,
-        photoURL: currentUser.photoURL || "",
         registeredAt: new Date(),
-      });
+        memberCount: teamData.memberIds ? teamData.memberIds.length : 1,
+      };
+
+      console.log("Registering team with data:", teamRegistrationData);
+
+      // Register the team for the tournament
+      try {
+        const docRef = await addDoc(
+          collection(db, "tournamentTeams"),
+          teamRegistrationData
+        );
+        console.log("Team registered successfully with ID:", docRef.id);
+      } catch (err) {
+        console.error("Error registering team:", err);
+        setError("Failed to register team: " + err.message);
+        return;
+      }
 
       // Update tournament participants count
       await updateDoc(doc(db, "tournaments", tournamentId), {
@@ -145,26 +389,36 @@ function TournamentDetail() {
   };
 
   const handleCancelRegistration = async () => {
-    if (!currentUser) return;
+    if (!currentUser || !isAdmin) return;
 
     try {
-      // Find user's registration
-      const participantsQuery = query(
-        collection(db, "tournamentParticipants"),
-        where("tournamentId", "==", tournamentId),
-        where("userId", "==", currentUser.uid)
-      );
+      // Get user data to find their team
+      const userRef = doc(db, "users", currentUser.uid);
+      const userDoc = await getDoc(userRef);
+      const userData = userDoc.data();
 
-      const participantsSnapshot = await getDocs(participantsQuery);
-
-      if (participantsSnapshot.empty) {
-        setError("You are not registered for this tournament");
+      if (!userData || !userData.teamId) {
+        setError("No team information found");
         return;
       }
 
-      // Delete registration
+      // Find team registration
+      const teamRegistrationQuery = query(
+        collection(db, "tournamentTeams"),
+        where("tournamentId", "==", tournamentId),
+        where("teamId", "==", userData.teamId)
+      );
+
+      const teamRegistrationSnapshot = await getDocs(teamRegistrationQuery);
+
+      if (teamRegistrationSnapshot.empty) {
+        setError("Your team is not registered for this tournament");
+        return;
+      }
+
+      // Delete team registration
       await deleteDoc(
-        doc(db, "tournamentParticipants", participantsSnapshot.docs[0].id)
+        doc(db, "tournamentTeams", teamRegistrationSnapshot.docs[0].id)
       );
 
       // Update tournament participants count
@@ -176,10 +430,199 @@ function TournamentDetail() {
       setIsRegistered(false);
       fetchTournamentDetails();
     } catch (err) {
-      console.error("Error canceling tournament registration:", err);
-      setError("Failed to cancel registration. Please try again.");
+      console.error("Error canceling team registration:", err);
+      setError("Failed to cancel team registration. Please try again.");
     }
   };
+
+  // Handle switching to edit mode
+  const handleEditClick = () => {
+    setEditMode(true);
+    setEditFormData({
+      name: tournament.name,
+      sport: tournament.sport,
+      location: tournament.location,
+      description: tournament.description,
+      startDate: formatDateForInput(tournament.startDate),
+      registrationDeadline: formatDateForInput(tournament.registrationDeadline),
+      maxParticipants: tournament.maxParticipants,
+      status: tournament.status || "Registration Open",
+    });
+  };
+
+  // Handle edit form input changes
+  const handleEditChange = (e) => {
+    const { name, value } = e.target;
+    setEditFormData({
+      ...editFormData,
+      [name]: name === "maxParticipants" ? parseInt(value) : value,
+    });
+  };
+
+  // Format date for input field
+  const formatDateForInput = (date) => {
+    if (!date) return "";
+    const d = new Date(date);
+    return d.toISOString().split("T")[0];
+  };
+
+  // Handle tournament update
+  const handleUpdateTournament = async (e) => {
+    e.preventDefault();
+
+    if (!isSuperAdmin) {
+      setError("Only superadmins can edit tournaments");
+      return;
+    }
+
+    try {
+      setIsEditing(true);
+      setError(null);
+
+      const tournamentRef = doc(db, "tournaments", tournamentId);
+
+      await updateDoc(tournamentRef, {
+        name: editFormData.name,
+        sport: editFormData.sport,
+        location: editFormData.location,
+        description: editFormData.description,
+        startDate: new Date(editFormData.startDate),
+        registrationDeadline: new Date(editFormData.registrationDeadline),
+        maxParticipants: parseInt(editFormData.maxParticipants),
+        status: editFormData.status,
+      });
+
+      // Refresh tournament data
+      await fetchTournamentDetails();
+
+      // Exit edit mode
+      setEditMode(false);
+      setEditFormData(null);
+    } catch (err) {
+      console.error("Error updating tournament:", err);
+      setError("Failed to update tournament. Please try again.");
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
+  // Handle tournament deletion
+  const handleDeleteTournament = async () => {
+    if (!isSuperAdmin) {
+      setError("Only superadmins can delete tournaments");
+      return;
+    }
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      // Delete all team registrations first
+      const teamsQuery = query(
+        collection(db, "tournamentTeams"),
+        where("tournamentId", "==", tournamentId)
+      );
+      const teamsSnapshot = await getDocs(teamsQuery);
+
+      const deleteTeamPromises = teamsSnapshot.docs.map((teamDoc) =>
+        deleteDoc(teamDoc.ref)
+      );
+      await Promise.all(deleteTeamPromises);
+
+      // Delete the tournament document
+      const tournamentRef = doc(db, "tournaments", tournamentId);
+      await deleteDoc(tournamentRef);
+
+      // Redirect to tournaments page
+      navigate("/tournaments");
+    } catch (err) {
+      console.error("Error deleting tournament:", err);
+      setError("Failed to delete tournament. Please try again.");
+      setIsLoading(false);
+    }
+  };
+
+  // Cancel edit mode
+  const handleCancelEdit = () => {
+    setEditMode(false);
+    setEditFormData(null);
+  }; // Function to refresh team data
+  const refreshTeamData = async () => {
+    if (!participants || participants.length === 0) return Promise.resolve(); // Return resolved promise if no participants
+
+    try {
+      console.log("Refreshing team data...");
+      // Using a local variable instead of component loading state to avoid render cycles
+      let isRefreshing = true;
+
+      const updatedParticipants = await Promise.all(
+        participants.map(async (team) => {
+          if (!team.teamId) return team;
+
+          // Get the latest team data
+          try {
+            const teamRef = doc(db, "teams", team.teamId);
+            const teamDoc = await getDoc(teamRef);
+
+            if (teamDoc.exists()) {
+              const currentTeamData = teamDoc.data();
+              const currentMemberCount = currentTeamData.memberIds
+                ? currentTeamData.memberIds.length
+                : 0;
+
+              // If count changed, update both the local state and the database record
+              if (currentMemberCount !== team.memberCount) {
+                console.log(
+                  `Team ${team.teamName} memberCount changed from ${team.memberCount} to ${currentMemberCount}`
+                );
+
+                // Update the database
+                await updateDoc(doc(db, "tournamentTeams", team.id), {
+                  memberCount: currentMemberCount,
+                });
+
+                // Return updated team data
+                return {
+                  ...team,
+                  memberCount: currentMemberCount,
+                };
+              }
+            } else {
+              console.log(
+                `Team ${team.teamName} (${team.teamId}) no longer exists in the database`
+              );
+              // Team might have been deleted, but registration still exists
+              return team;
+            }
+          } catch (err) {
+            console.error(
+              `Error refreshing data for team ${team.teamName}:`,
+              err
+            );
+          }
+
+          return team;
+        })
+      );
+      console.log("Team data refresh complete"); // Update participants state with the refreshed data
+      setParticipants(updatedParticipants);
+      return Promise.resolve(); // Return a resolved promise when completed successfully
+    } catch (err) {
+      console.error("Error refreshing team data:", err);
+      setError("Failed to refresh team data. Please try again.");
+      return Promise.reject(err); // Return a rejected promise on error
+    }
+  }; // Add effect hook to refresh team data only once when participants are initially loaded
+  useEffect(() => {
+    // Only run this effect once when participants are first loaded
+    // This prevents the refresh cycle and only updates the data when participants change
+    if (participants.length > 0) {
+      const timer = setTimeout(() => {
+        refreshTeamData();
+      }, 500); // Small delay to avoid any race conditions
+
+      return () => clearTimeout(timer);
+    }
+  }, [participants.length]); // Only run when the number of participants changes
 
   if (isLoading) {
     return (
@@ -253,7 +696,6 @@ function TournamentDetail() {
             Back to Tournaments
           </Link>
         </div>
-
         {/* Tournament header */}
         <div className="bg-white rounded-xl shadow-md overflow-hidden mb-8">
           <div className="relative h-64">
@@ -295,7 +737,6 @@ function TournamentDetail() {
                 {error}
               </div>
             )}
-
             <div className="flex flex-wrap -mx-2 mb-6">
               <div className="w-full md:w-1/3 px-2 mb-4 md:mb-0">
                 <div className="border border-gray-200 rounded-lg p-4">
@@ -320,7 +761,6 @@ function TournamentDetail() {
                 </div>
               </div>
             </div>
-
             <div className="flex flex-wrap -mx-2 mb-6">
               <div className="w-full md:w-1/2 px-2 mb-4 md:mb-0">
                 <div className="border border-gray-200 rounded-lg p-4">
@@ -341,14 +781,12 @@ function TournamentDetail() {
                 </div>
               </div>
             </div>
-
             <div className="mb-6">
               <h3 className="text-lg font-semibold mb-2">Description</h3>
               <div className="bg-gray-50 p-4 rounded-lg">
                 {tournament.description || "No description provided."}
               </div>
             </div>
-
             {/* Registration button */}
             {currentUser ? (
               isRegistered ? (
@@ -364,19 +802,21 @@ function TournamentDetail() {
                 >
                   {tournamentStarted
                     ? "Tournament has started"
-                    : "Cancel Registration"}
+                    : "Withdraw My Team"}
                 </button>
               ) : (
                 <button
                   onClick={handleRegister}
                   disabled={
                     registrationDeadlinePassed ||
-                    participants.length >= tournament.maxParticipants
+                    participants.length >= tournament.maxParticipants ||
+                    !isAdmin
                   }
                   className={`w-full py-2 px-4 rounded-lg text-white text-center 
                     ${
                       registrationDeadlinePassed ||
-                      participants.length >= tournament.maxParticipants
+                      participants.length >= tournament.maxParticipants ||
+                      !isAdmin
                         ? "bg-gray-400 cursor-not-allowed"
                         : "bg-blue-600 hover:bg-blue-700 transition-colors duration-200"
                     }`}
@@ -385,102 +825,386 @@ function TournamentDetail() {
                     ? "Registration Closed"
                     : participants.length >= tournament.maxParticipants
                     ? "Tournament Full"
-                    : "Register for Tournament"}
+                    : isAdmin
+                    ? "Register My Team"
+                    : "Only Admins Can Register Teams"}
                 </button>
               )
             ) : (
               <Link to="/login">
                 <button className="w-full py-2 px-4 rounded-lg text-white bg-blue-600 hover:bg-blue-700 transition-colors duration-200 text-center">
-                  Login to Register
+                  Login as Admin to Register Team
                 </button>
               </Link>
             )}
           </div>
         </div>
+        {/* Tournament Navigation */}
+        <div className="bg-white rounded-xl shadow-md p-4 mb-8">
+          <div className="flex flex-wrap items-center justify-center space-x-2 md:space-x-4">
+            {isAdmin && (
+              <Link
+                to={`/tournament/${tournamentId}/matches`}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors my-2"
+              >
+                Match Schedule
+              </Link>
+            )}{" "}
+            <Link
+              to={`/tournament/${tournamentId}/rankings`}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors my-2"
+            >
+              Team Rankings
+            </Link>
+            <Link
+              to={`/tournament/${tournamentId}/rankings?tab=players`}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors my-2"
+            >
+              Player Statistics
+            </Link>
+          </div>
+        </div>
+        {/* Participating Teams section */}
+        <div className="bg-white rounded-xl shadow-md p-6 mb-8">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-bold">Participating Teams</h2>{" "}
+            <button
+              onClick={() => {
+                // Show feedback via a temporary message
+                const btn = document.getElementById("refresh-btn");
+                if (btn) {
+                  const originalText = btn.innerHTML;
+                  btn.innerHTML = `<svg class="w-4 h-4 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Refreshing...`;
 
-        {/* Participants section */}
-        <div className="bg-white rounded-xl shadow-md overflow-hidden mb-8">
-          <div className="p-6">
-            <h2 className="text-xl font-bold mb-4">
-              Participants ({participants.length})
-            </h2>
-
-            {participants.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                No one has registered for this tournament yet.
+                  refreshTeamData().then(() => {
+                    setTimeout(() => {
+                      if (btn) btn.innerHTML = originalText;
+                    }, 1000);
+                  });
+                } else {
+                  refreshTeamData();
+                }
+              }}
+              id="refresh-btn"
+              className="text-sm bg-blue-50 hover:bg-blue-100 text-blue-600 py-1 px-3 rounded border border-blue-200 flex items-center"
+            >
+              <svg
+                className="w-4 h-4 mr-1"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                ></path>
+              </svg>
+              Refresh Teams
+            </button>
+          </div>
+          {participants.length === 0 ? (
+            <p className="text-gray-600">No teams have registered yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full bg-white">
+                <thead>
+                  <tr>
+                    <th className="py-2 px-4 border-b text-left">Team</th>
+                    <th className="py-2 px-4 border-b text-left">Sport</th>
+                    <th className="py-2 px-4 border-b text-left">Manager</th>
+                    <th className="py-2 px-4 border-b text-left">Members</th>
+                    <th className="py-2 px-4 border-b text-left">
+                      Registered On
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {participants.map((team) => (
+                    <tr key={team.id}>
+                      <td className="py-2 px-4 border-b font-medium">
+                        {team.teamName}
+                      </td>
+                      <td className="py-2 px-4 border-b">{team.sport}</td>
+                      <td className="py-2 px-4 border-b">
+                        {team.managerName || "Unknown"}
+                      </td>
+                      <td className="py-2 px-4 border-b text-center">
+                        <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                          {typeof team.memberCount === "number"
+                            ? team.memberCount
+                            : 0}
+                        </span>
+                      </td>
+                      <td className="py-2 px-4 border-b">
+                        {team.registeredAt
+                          ? new Date(
+                              team.registeredAt.seconds * 1000
+                            ).toLocaleDateString()
+                          : "N/A"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>{" "}
+        {/* Tournament Matches Section */}
+        <div className="bg-white rounded-xl shadow-md p-6 mb-8">
+          {" "}
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-bold">Tournament Matches</h2>
+            {isAdmin && (
+              <Link
+                to={`/tournament/${tournamentId}/matches/create`}
+                className="bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 transition flex items-center"
+              >
+                <svg
+                  className="w-4 h-4 mr-2"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M12 4v16m8-8H4"
+                  />
+                </svg>
+                Schedule New Match
+              </Link>
+            )}
+          </div>
+          {tournamentId ? (
+            <MatchList
+              tournamentId={tournamentId}
+              tournamentName={tournament?.name || "Tournament"}
+            />
+          ) : (
+            <div className="bg-white rounded-xl shadow-md overflow-hidden mt-8">
+              <div className="p-6 text-center">
+                <p className="text-red-600">
+                  Unable to load matches: Missing tournament ID
+                </p>
               </div>
-            ) : (
-              <div className="space-y-4">
-                {participants.map((participant) => (
-                  <div
-                    key={participant.id}
-                    className="flex items-center p-3 bg-gray-50 rounded-lg"
+            </div>
+          )}
+        </div>
+        {/* Admin Controls - Only visible to tournament creator and superadmins */}
+        {canEditTournament && !editMode && (
+          <div className="bg-white rounded-xl shadow-md p-6 mb-8 border-l-4 border-blue-500">
+            {" "}
+            <h2 className="text-2xl font-bold mb-4">Tournament Management</h2>
+            <p className="text-gray-600 mb-4">
+              As a super administrator, you can edit tournament details or
+              delete it. Only superadmins have permission to manage tournaments.
+            </p>
+            <div className="flex space-x-4">
+              <button
+                onClick={handleEditClick}
+                className="bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 transition-colors duration-200"
+              >
+                Edit Tournament
+              </button>
+
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="bg-red-600 text-white py-2 px-4 rounded hover:bg-red-700 transition-colors duration-200"
+              >
+                Delete Tournament
+              </button>
+            </div>
+            {/* Delete confirmation */}
+            {showDeleteConfirm && (
+              <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p className="font-medium text-red-800 mb-2">
+                  Are you sure you want to delete this tournament?
+                </p>
+                <p className="text-red-700 mb-4">
+                  This action cannot be undone. All registrations will be
+                  removed.
+                </p>
+                <div className="flex space-x-4">
+                  <button
+                    onClick={handleDeleteTournament}
+                    className="bg-red-600 text-white py-2 px-4 rounded hover:bg-red-700 transition-colors duration-200"
                   >
-                    {participant.photoURL ? (
-                      <img
-                        src={participant.photoURL}
-                        alt={participant.displayName}
-                        className="w-10 h-10 rounded-full mr-3"
-                      />
-                    ) : (
-                      <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white mr-3">
-                        {participant.displayName.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <div>
-                      <div className="font-medium">
-                        {participant.displayName}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        Joined{" "}
-                        {new Date(
-                          participant.registeredAt.seconds * 1000
-                        ).toLocaleDateString()}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                    Yes, Delete Tournament
+                  </button>
+                  <button
+                    onClick={() => setShowDeleteConfirm(false)}
+                    className="bg-gray-500 text-white py-2 px-4 rounded hover:bg-gray-600 transition-colors duration-200"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             )}
           </div>
-        </div>
+        )}
+        {/* Edit Tournament Form */}
+        {editMode && (
+          <div className="bg-white rounded-xl shadow-md p-6 mb-8 border-l-4 border-yellow-500">
+            <h2 className="text-2xl font-bold mb-4">Edit Tournament</h2>
 
-        {/* Admin actions section - only visible to creator */}
-        {isCreator && (
-          <div className="bg-white rounded-xl shadow-md overflow-hidden">
-            <div className="p-6">
-              <h2 className="text-xl font-bold mb-4">Tournament Management</h2>
-              <div className="space-y-4">
-                <Link to={`/tournament/${tournamentId}/edit`}>
-                  <button className="w-full py-2 px-4 rounded-lg text-white bg-blue-600 hover:bg-blue-700 transition-colors duration-200 text-center">
-                    Edit Tournament
-                  </button>
-                </Link>
+            {error && (
+              <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+                {error}
+              </div>
+            )}
 
-                {tournamentStarted && (
-                  <Link to={`/tournament/${tournamentId}/matches`}>
-                    <button className="w-full py-2 px-4 rounded-lg text-white bg-green-600 hover:bg-green-700 transition-colors duration-200 text-center">
-                      Manage Matches
-                    </button>
-                  </Link>
-                )}
+            <form onSubmit={handleUpdateTournament} className="space-y-4">
+              <div>
+                <label className="block text-gray-700 mb-1">
+                  Tournament Name
+                </label>
+                <input
+                  type="text"
+                  name="name"
+                  value={editFormData.name}
+                  onChange={handleEditChange}
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-gray-700 mb-1">Sport</label>
+                  <select
+                    name="sport"
+                    value={editFormData.sport}
+                    onChange={handleEditChange}
+                    required
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  >
+                    <option value="Football">Football</option>
+                    <option value="Basketball">Basketball</option>
+                    <option value="Tennis">Tennis</option>
+                    <option value="Volleyball">Volleyball</option>
+                    <option value="Swimming">Swimming</option>
+                    <option value="Athletics">Athletics</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 mb-1">Location</label>
+                  <input
+                    type="text"
+                    name="location"
+                    value={editFormData.location}
+                    onChange={handleEditChange}
+                    required
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-gray-700 mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    name="startDate"
+                    value={editFormData.startDate}
+                    onChange={handleEditChange}
+                    required
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 mb-1">
+                    Registration Deadline
+                  </label>
+                  <input
+                    type="date"
+                    name="registrationDeadline"
+                    value={editFormData.registrationDeadline}
+                    onChange={handleEditChange}
+                    required
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-gray-700 mb-1">
+                    Maximum Participants
+                  </label>
+                  <input
+                    type="number"
+                    name="maxParticipants"
+                    value={editFormData.maxParticipants}
+                    onChange={handleEditChange}
+                    min={participants.length}
+                    required
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  />
+                  {participants.length > 0 && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      Cannot be less than current participants (
+                      {participants.length})
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 mb-1">Status</label>
+                  <select
+                    name="status"
+                    value={editFormData.status}
+                    onChange={handleEditChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  >
+                    <option value="Registration Open">Registration Open</option>
+                    <option value="Registration Closed">
+                      Registration Closed
+                    </option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Completed">Completed</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-gray-700 mb-1">Description</label>
+                <textarea
+                  name="description"
+                  value={editFormData.description}
+                  onChange={handleEditChange}
+                  rows="3"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                ></textarea>
+              </div>
+
+              <div className="flex justify-end space-x-4">
                 <button
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Are you sure you want to delete this tournament? This action cannot be undone."
-                      )
-                    ) {
-                      // Delete logic would go here
-                    }
-                  }}
-                  className="w-full py-2 px-4 rounded-lg text-white bg-red-600 hover:bg-red-700 transition-colors duration-200 text-center"
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="bg-gray-500 text-white py-2 px-6 rounded-lg hover:bg-gray-600 transition-colors duration-200"
                 >
-                  Delete Tournament
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isEditing}
+                  className={`bg-blue-600 text-white py-2 px-6 rounded-lg ${
+                    isEditing
+                      ? "opacity-70 cursor-not-allowed"
+                      : "hover:bg-blue-700"
+                  } transition-colors duration-200`}
+                >
+                  {isEditing ? "Updating..." : "Update Tournament"}
                 </button>
               </div>
-            </div>
+            </form>
           </div>
         )}
       </div>

@@ -13,11 +13,26 @@ const firebaseConfig = {
   measurementId: "G-CDM1XJXT45",
 };
 
-const firebaseApp = initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const analytics = getAnalytics(app);
+// Initialize Firebase once
+let app;
+try {
+  // Check if Firebase app is already initialized
+  app = initializeApp(firebaseConfig);
+  console.log("Firebase initialized successfully");
+} catch (error) {
+  if (error.code === "app/duplicate-app") {
+    // If the app is already initialized, get the existing one
+    console.warn("Firebase app already exists, using existing app");
+  } else {
+    // Handle other initialization errors
+    console.error("Firebase initialization error:", error);
+  }
+}
+
+// Get Firebase services
+const auth = getAuth();
+const db = getFirestore();
+const analytics = getAnalytics();
 const googleProvider = new GoogleAuthProvider();
 
 onAuthStateChanged(auth, (user) => {
